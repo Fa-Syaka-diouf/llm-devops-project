@@ -218,6 +218,60 @@ Le déploiement a été validé selon les critères suivants, conformément aux 
     \label{fig:mistral}
 \end{figure}
 
+\section{Fonctionnalités bonus}
+
+Au-delà des exigences obligatoires, quatre améliorations supplémentaires ont été implémentées : la restructuration des manifestes avec Kustomize (environnements dev/prod), des NetworkPolicy, des PodDisruptionBudget, et un pipeline de validation continue (CI) sur GitHub Actions. Pour ces raisons de robustesse, aucune de ces fonctionnalités n'a été appliquée directement sur le cluster Minikube déjà validé (sections précédentes) : le risque de saturer à nouveau les ressources de la machine (voir section~\ref{sec:incidents}) n'en valait pas la peine. Chaque élément a en revanche été rendu et validé localement (\texttt{kubectl kustomize} + \texttt{kubeconform}), puis vérifié en conditions réelles via le pipeline CI décrit en~\ref{sec:cicd}.
+
+\subsection{Restructuration Kustomize (environnements dev / prod)}
+
+Les neuf manifestes de base ont été déplacés tels quels dans \texttt{k8s/base/}, accompagnés d'un fichier \texttt{kustomization.yaml} qui les référence. Deux overlays ont ensuite été créés :
+
+\begin{itemize}[nosep]
+    \item \texttt{k8s/overlays/dev/} : espace de noms \texttt{llm-devops-dev}, limites CPU/mémoire d'Ollama réduites (2 vCPU / 3\,Gi au lieu de 6 vCPU / 5\,Gi), hôte d'Ingress \texttt{llm-dev.local} --- adapté à une itération rapide sur une machine peu puissante.
+    \item \texttt{k8s/overlays/prod/} : espace de noms \texttt{llm-devops-prod}, stockage Ollama porté à 30\,Gi, et ajout des NetworkPolicy et PodDisruptionBudget détaillés ci-dessous.
+\end{itemize}
+
+Chaque overlay ne fait que patcher la base commune : un correctif appliqué dans \texttt{base/} profite automatiquement aux deux environnements, sans duplication de YAML. Les deux rendus ont été validés avec \texttt{kubeconform}, qui vérifie leur conformité au schéma de l'API Kubernetes :
+
+\begin{lstlisting}
+$ kubectl kustomize k8s/overlays/dev | kubeconform -strict -summary
+Summary: 9 resources found in 1 file - Valid: 9, Invalid: 0, Errors: 0, Skipped: 0
+
+$ kubectl kustomize k8s/overlays/prod | kubeconform -strict -summary
+Summary: 13 resources found in 1 file - Valid: 13, Invalid: 0, Errors: 0, Skipped: 0
+\end{lstlisting}
+
+\subsection{NetworkPolicy}
+
+Deux règles réseau, actives uniquement dans l'overlay \texttt{prod} :
+
+\begin{itemize}[nosep]
+    \item Ollama n'accepte du trafic entrant que depuis les pods portant le label \texttt{app.kubernetes.io/name: open-webui}, sur le port 11434.
+    \item Open WebUI n'accepte du trafic entrant que depuis le namespace du contrôleur Ingress (\texttt{ingress-nginx}), sur le port 8080.
+\end{itemize}
+
+\textbf{Limite honnête à signaler} : une NetworkPolicy n'est effective que si le plugin réseau (CNI) du cluster l'implémente. Le CNI par défaut de Minikube observé ici (\texttt{kindnet}, visible dans les pods du namespace \texttt{kube-system}) accepte ces objets sans erreur mais ne les fait pas respecter. Ces manifestes sont donc corrects et fonctionneraient tels quels sur un cluster de production utilisant un CNI compatible (Calico, Cilium, Weave), mais leur effet n'a pas pu être vérifié en conditions réelles sur cet environnement de test.
+
+\subsection{PodDisruptionBudget}
+
+Un \texttt{PodDisruptionBudget} avec \texttt{minAvailable: 1} a été défini pour chacun des deux Deployments (overlay \texttt{prod}). Il protège contre les interruptions volontaires (par exemple un \texttt{kubectl drain} lors d'une maintenance planifiée d'un nœud) : Kubernetes refusera d'évincer un pod si cela faisait tomber le nombre de réplicas disponibles en dessous du seuil défini. Ce mécanisme est complémentaire aux probes, qui gèrent les pannes non planifiées.
+
+\subsection{Pipeline GitHub Actions}
+\label{sec:cicd}
+
+Pour valider ce travail dans des conditions représentatives, le contenu de \texttt{llm-devops-project} a été extrait dans un dépôt public dédié : \href{https://github.com/Fa-Syaka-diouf/llm-devops-project}{github.com/Fa-Syaka-diouf/llm-devops-project}. Un pipeline GitHub Actions (\texttt{.github/workflows/k8s-validate.yml}) s'y déclenche à chaque modification du dossier \texttt{k8s/} : il installe \texttt{kubectl}, rend les deux overlays avec Kustomize, les valide avec \texttt{kubeconform}, puis vérifie le style des fichiers YAML avec \texttt{yamllint}. L'ensemble tourne sur l'infrastructure de GitHub, sans aucune charge sur la machine locale.
+
+Le premier déclenchement du pipeline a d'ailleurs révélé une vraie erreur (fichiers YAML sans retour à la ligne final), corrigée immédiatement --- preuve que le pipeline fonctionne réellement et ne se contente pas de toujours réussir. Après correction, le run suivant est passé avec succès :
+
+\begin{lstlisting}
+Run: https://github.com/Fa-Syaka-diouf/llm-devops-project/actions/runs/34655853154
+Job "validate" : succeeded in 11s
+
+Summary: 9 resources found in 1 file  - Valid: 9,  Invalid: 0, Errors: 0
+Summary: 13 resources found in 1 file - Valid: 13, Invalid: 0, Errors: 0
+yamllint: outcome=success
+\end{lstlisting}
+
 \section*{Conclusion}
 
 Ce projet a permis de mettre en pratique l'ensemble du cycle de conteneurisation d'une application d'IA, depuis un déploiement local avec Docker Compose jusqu'à une orchestration Kubernetes conforme aux bonnes pratiques de production (isolation par namespace, configuration externalisée, stockage persistant, gestion explicite des ressources, sondes de santé multi-niveaux). Les difficultés rencontrées en conditions réelles --- limite mémoire trop basse, quota CPU insuffisant pour l'inférence d'un modèle de 7 milliards de paramètres, téléchargement bloquant au démarrage --- ont constitué des cas d'étude concrets pour comprendre le rôle exact de chaque mécanisme Kubernetes plutôt qu'une simple application théorique du cours.
