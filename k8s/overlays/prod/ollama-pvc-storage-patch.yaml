@@ -1,0 +1,10 @@
+﻿apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-pvc
+spec:
+  resources:
+    requests:
+      # Production allows storing more models simultaneously than the
+      # 15Gi dev/base default.
+      storage: 30Gi

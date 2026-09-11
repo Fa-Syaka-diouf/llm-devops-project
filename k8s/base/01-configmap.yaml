@@ -1,0 +1,18 @@
+﻿apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-config
+  namespace: llm-devops
+  labels:
+    app.kubernetes.io/part-of: llm-devops-project
+data:
+  # Internal cluster DNS name of the Ollama Service (see 05-ollama-service.yaml).
+  # Open WebUI uses this to reach the Ollama API instead of a hardcoded IP.
+  OLLAMA_BASE_URL: "http://ollama:11434"
+  OLLAMA_HOST: "0.0.0.0:11434"
+  OLLAMA_KEEP_ALIVE: "24h"
+  WEBUI_AUTH: "true"
+  # RAG embedding/reranking models aren't needed for this project (LLM chat only);
+  # disabling avoids a slow HuggingFace download blocking the startup probe.
+  RAG_EMBEDDING_MODEL_AUTO_UPDATE: "false"
+  RAG_RERANKING_MODEL_AUTO_UPDATE: "false"

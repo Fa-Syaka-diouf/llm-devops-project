@@ -1,0 +1,16 @@
+﻿apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base resources shared by every environment (dev, prod).
+# Overlays only ever ADD or PATCH on top of this list -- they never
+# duplicate resource definitions.
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  - 02-ollama-pvc.yaml
+  - 03-webui-pvc.yaml
+  - 04-ollama-deployment.yaml
+  - 05-ollama-service.yaml
+  - 06-webui-deployment.yaml
+  - 07-webui-service.yaml
+  - 08-ingress.yaml

@@ -1,0 +1,15 @@
+﻿apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webui-pvc
+  namespace: llm-devops
+  labels:
+    app.kubernetes.io/part-of: llm-devops-project
+    app.kubernetes.io/name: open-webui
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Stores the SQLite DB: user accounts, chat history, settings.
+      storage: 2Gi

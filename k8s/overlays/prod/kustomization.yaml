@@ -1,0 +1,20 @@
+﻿apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Hardened environment: adds NetworkPolicies (restrict pod-to-pod traffic)
+# and PodDisruptionBudgets (guarantee availability during voluntary node
+# maintenance), on top of a larger model-storage allowance.
+namespace: llm-devops-prod
+
+resources:
+  - ../../base
+  - networkpolicy-ollama.yaml
+  - networkpolicy-webui.yaml
+  - pdb-ollama.yaml
+  - pdb-webui.yaml
+
+patches:
+  - path: ollama-pvc-storage-patch.yaml
+    target:
+      kind: PersistentVolumeClaim
+      name: ollama-pvc
