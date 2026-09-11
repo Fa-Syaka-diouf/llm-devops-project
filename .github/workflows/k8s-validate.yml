@@ -1,0 +1,49 @@
+﻿name: Validate Kubernetes Manifests
+
+on:
+  push:
+    paths:
+      - "k8s/**"
+      - ".github/workflows/k8s-validate.yml"
+  pull_request:
+    paths:
+      - "k8s/**"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.31.0"
+
+      - name: Render dev overlay with Kustomize
+        run: kubectl kustomize k8s/overlays/dev > dev.rendered.yaml
+
+      - name: Render prod overlay with Kustomize
+        run: kubectl kustomize k8s/overlays/prod > prod.rendered.yaml
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate manifests against the Kubernetes API schema
+        run: |
+          kubeconform -strict -summary dev.rendered.yaml
+          kubeconform -strict -summary prod.rendered.yaml
+
+      - name: Lint YAML style
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: k8s
+          config_data: |
+            extends: default
+            rules:
+              line-length: disable
+              document-start: disable
+              truthy: disable
