@@ -1,0 +1,113 @@
+﻿\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+\titleformat{\section}{\Large\bfseries\color{black!85}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{black!75}}{\thesubsection}{1em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{DevOps Project -- Fonctionnalités bonus}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\setlength{\headheight}{14pt}
+
+\definecolor{codebg}{RGB}{245,245,245}
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    framesep=4pt,
+    columns=fullflexible,
+    keywordstyle=\color{blue!70!black},
+    commentstyle=\color{gray}
+}
+
+\title{\vspace{-1.5cm}\textbf{Fonctionnalités bonus} \\[0.2cm]
+\large Déploiement d'un LLM Open-Source avec Docker Compose et Kubernetes}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{fancy}
+\vspace{-1.2cm}
+
+\section*{Introduction}
+
+Ce document complète le rapport principal du projet \emph{Déploiement d'un LLM Open-Source avec Docker Compose et Kubernetes}. Il détaille les quatre fonctionnalités optionnelles implémentées au-delà des exigences obligatoires : la restructuration des manifestes avec Kustomize (environnements dev/prod), des NetworkPolicy, des PodDisruptionBudget, et un pipeline de validation continue (CI) sur GitHub Actions.
+
+Par souci de robustesse, aucune de ces fonctionnalités n'a été appliquée directement sur le cluster Minikube du rapport principal, déjà validé et capturé en écran : le risque de saturer à nouveau les ressources de la machine (des incidents de mémoire et de CPU ont déjà été rencontrés et documentés dans le rapport principal) n'en valait pas la peine. Chaque élément a en revanche été rendu et validé localement (\texttt{kubectl kustomize} + \texttt{kubeconform}), puis vérifié en conditions réelles via le pipeline CI décrit en section~\ref{sec:cicd}.
+
+\section{Restructuration Kustomize (environnements dev / prod)}
+
+Les neuf manifestes de base ont été déplacés tels quels dans \texttt{k8s/base/}, accompagnés d'un fichier \texttt{kustomization.yaml} qui les référence. Deux overlays ont ensuite été créés :
+
+\begin{itemize}[nosep]
+    \item \texttt{k8s/overlays/dev/} : espace de noms \texttt{llm-devops-dev}, limites CPU/mémoire d'Ollama réduites (2 vCPU / 3\,Gi au lieu de 6 vCPU / 5\,Gi), hôte d'Ingress \texttt{llm-dev.local} --- adapté à une itération rapide sur une machine peu puissante.
+    \item \texttt{k8s/overlays/prod/} : espace de noms \texttt{llm-devops-prod}, stockage Ollama porté à 30\,Gi, et ajout des NetworkPolicy et PodDisruptionBudget détaillés ci-dessous.
+\end{itemize}
+
+Chaque overlay ne fait que patcher la base commune : un correctif appliqué dans \texttt{base/} profite automatiquement aux deux environnements, sans duplication de YAML. Les deux rendus ont été validés avec \texttt{kubeconform}, qui vérifie leur conformité au schéma de l'API Kubernetes :
+
+\begin{lstlisting}
+$ kubectl kustomize k8s/overlays/dev | kubeconform -strict -summary
+Summary: 9 resources found in 1 file - Valid: 9, Invalid: 0, Errors: 0, Skipped: 0
+
+$ kubectl kustomize k8s/overlays/prod | kubeconform -strict -summary
+Summary: 13 resources found in 1 file - Valid: 13, Invalid: 0, Errors: 0, Skipped: 0
+\end{lstlisting}
+
+\section{NetworkPolicy}
+
+Deux règles réseau, actives uniquement dans l'overlay \texttt{prod} :
+
+\begin{itemize}[nosep]
+    \item Ollama n'accepte du trafic entrant que depuis les pods portant le label \texttt{app.kubernetes.io/name: open-webui}, sur le port 11434.
+    \item Open WebUI n'accepte du trafic entrant que depuis le namespace du contrôleur Ingress (\texttt{ingress-nginx}), sur le port 8080.
+\end{itemize}
+
+\textbf{Limite honnête à signaler} : une NetworkPolicy n'est effective que si le plugin réseau (CNI) du cluster l'implémente. Le CNI par défaut de Minikube observé ici (\texttt{kindnet}, visible dans les pods du namespace \texttt{kube-system}) accepte ces objets sans erreur mais ne les fait pas respecter. Ces manifestes sont donc corrects et fonctionneraient tels quels sur un cluster de production utilisant un CNI compatible (Calico, Cilium, Weave), mais leur effet n'a pas pu être vérifié en conditions réelles sur cet environnement de test.
+
+\section{PodDisruptionBudget}
+
+Un \texttt{PodDisruptionBudget} avec \texttt{minAvailable: 1} a été défini pour chacun des deux Deployments (overlay \texttt{prod}). Il protège contre les interruptions volontaires (par exemple un \texttt{kubectl drain} lors d'une maintenance planifiée d'un nœud) : Kubernetes refusera d'évincer un pod si cela faisait tomber le nombre de réplicas disponibles en dessous du seuil défini. Ce mécanisme est complémentaire aux probes, qui gèrent les pannes non planifiées.
+
+\section{Pipeline GitHub Actions}
+\label{sec:cicd}
+
+Pour valider ce travail dans des conditions représentatives, le contenu de \texttt{llm-devops-project} a été extrait dans un dépôt public dédié : \href{https://github.com/Fa-Syaka-diouf/llm-devops-project}{github.com/Fa-Syaka-diouf/llm-devops-project}. Un pipeline GitHub Actions (\texttt{.github/workflows/k8s-validate.yml}) s'y déclenche à chaque modification du dossier \texttt{k8s/} : il installe \texttt{kubectl}, rend les deux overlays avec Kustomize, les valide avec \texttt{kubeconform}, puis vérifie le style des fichiers YAML avec \texttt{yamllint}. L'ensemble tourne sur l'infrastructure de GitHub, sans aucune charge sur la machine locale.
+
+Le premier déclenchement du pipeline a d'ailleurs révélé une vraie erreur (fichiers YAML sans retour à la ligne final), corrigée immédiatement --- preuve que le pipeline fonctionne réellement et ne se contente pas de toujours réussir. Après correction, le run suivant est passé avec succès :
+
+\begin{lstlisting}
+Run: https://github.com/Fa-Syaka-diouf/llm-devops-project/actions/runs/34655853154
+Job "validate" : succeeded in 11s
+
+Summary: 9 resources found in 1 file  - Valid: 9,  Invalid: 0, Errors: 0
+Summary: 13 resources found in 1 file - Valid: 13, Invalid: 0, Errors: 0
+yamllint: outcome=success
+\end{lstlisting}
+
+\end{document}
